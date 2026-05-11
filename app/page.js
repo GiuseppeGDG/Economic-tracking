@@ -4,12 +4,19 @@ import { createClient } from "@supabase/supabase-js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const geminiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
 
-const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY);
+let supabase = null;
+let genAI = null;
+
+if (supabaseUrl && supabaseKey) {
+  supabase = createClient(supabaseUrl, supabaseKey);
+}
+if (geminiKey) {
+  genAI = new GoogleGenerativeAI(geminiKey);
+}
 
 export default function Home() {
   const [assets, setAssets] = useState([]);
@@ -28,30 +35,32 @@ export default function Home() {
     "Considerando le mie posizioni e la storia del mio portafoglio, qual è la probabilità di raggiungere un patrimonio netto di 1 milione di dollari in 10 anni?"
   ];
 
-  useEffect(() => { loadAssets(); }, []);
+  useEffect(() => { if (supabase) loadAssets(); }, []);
 
   async function loadAssets() {
+    if (!supabase) return;
     const { data } = await supabase.from("assets").select("*").order("created_at", { ascending: false });
     setAssets(data || []);
   }
 
   async function addAsset() {
-    if (!name || !value) return;
+    if (!name || !value || !supabase) return;
     await supabase.from("assets").insert({ name, ticker, asset_type: type, value: parseFloat(value) });
     setName(""); setTicker(""); setValue(""); setShowForm(false);
     loadAssets();
   }
 
   async function askAI(question) {
+    if (!genAI) return;
     setLoading(true);
     setAiResponse("");
-    const context = assets.map(a => `${a.name} (${a.asset_type}): €${a.value}`).join(", ");
-    const prompt = `Sei un consulente finanziario esperto. Portfolio dell'utente: ${context || "nessun asset"}. Domanda: ${question}`;
+    const context = assets.map(a => a.name + " (" + a.asset_type + "): €" + a.value).join(", ");
+    const prompt = "Sei un consulente finanziario esperto. Portfolio dell'utente: " + (context || "nessun asset") + ". Domanda: " + question;
     try {
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
       const result = await model.generateContent(prompt);
       setAiResponse(result.response.text());
-    } catch { setAiResponse("Errore. Controlla la chiave API nelle impostazioni."); }
+    } catch (e) { setAiResponse("Errore. Controlla la chiave API."); }
     setLoading(false);
   }
 
@@ -68,18 +77,20 @@ export default function Home() {
         {assets.length === 0 ? (
           <p style={{ color: "#999" }}>Aggiungi i tuoi beni per iniziare a monitorare il tuo patrimonio netto.</p>
         ) : (
-          <>
+          <div>
             <p style={{ fontSize: 24, fontWeight: "bold", marginBottom: 16 }}>€{netWorth.toLocaleString()}</p>
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="valore" stroke="#2563eb" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          </>
+            {chartData.length > 0 && (
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="valore" stroke="#2563eb" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
         )}
         <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
           <button onClick={() => setShowForm(!showForm)} style={{ padding: "10px 20px", background: "#2563eb", color: "white", border: "none", borderRadius: 6, cursor: "pointer" }}>+ Nuovo asset</button>
